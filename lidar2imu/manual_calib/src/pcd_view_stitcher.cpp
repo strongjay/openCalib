@@ -10,9 +10,10 @@
 #include <pangolin/pangolin.h>
 #include <iostream>
 #include <boost/filesystem.hpp>
+#include "extrinsic_param.hpp"
 
 using namespace std;
-
+bool  jzy = false;
 #define GL_GPU_MEM_INFO_CURRENT_AVAILABLE_MEM_NVX 0x9049
 #define APPLY_COLOR_TO_LIDAR_INTENSITY  // to set intensity colored or not
 typedef std::vector<Eigen::Matrix4d> VecMatrixs4d;
@@ -40,9 +41,9 @@ RGB GreyToColorMix(int val);
 int main(int argc, char **argv) {
     size_t beginIndex = 0;
     if (argc < 3 ) {
-        cout << "Usage: ./pcd_view_stitcher pcd_folder lidar_pose_file "
+        cout << "Usage: ./pcd_view_stitcher pcd_folder lidar_pose_file extrinsic_json"
                 "\nexample:\n\t"
-                "./bin/pcd_view_stitcher data/top_center_lidar data/top_center_lidar-pose.txt"
+                "./bin/pcd_view_stitcher data/top_center_lidar data/top_center_lidar-pose.txt data/extrinsic.json"
              << endl;
         return 0;
     }
@@ -53,7 +54,12 @@ int main(int argc, char **argv) {
         pcd_dir += "/";
     }
     std::string lidar_pose_file(argv[2]);
+    std::string extrinsic_json(argv[3]); 
 
+    Eigen::Matrix4d extrinsic_matrix;
+    LoadExtrinsic(extrinsic_json, extrinsic_matrix);
+    std::cout << "Loaded extrinsic matrix:\n" << extrinsic_matrix << std::endl;
+    
     VecMatrixs4d poses;
     std::vector<std::string> pcd_file_names;
     if (!ReadLidarPoses(lidar_pose_file, &poses, &pcd_file_names)) {
@@ -66,7 +72,7 @@ int main(int argc, char **argv) {
     // convert to local frame to support global pose
     auto T0 = poses[beginIndex].inverse().eval();
     for (size_t i = beginIndex; i < poses.size(); ++i) {
-        poses[i] = T0 * poses[i];
+        poses[i] = T0 * poses[i] * extrinsic_matrix.inverse().eval(); // local_world -> world_imu -> imu_lidar
     }
 
     vertexBuffers.reserve(pcd_file_names.size());
@@ -151,8 +157,11 @@ int main(int argc, char **argv) {
             menuNext = false;
         }
         if (lastFrm < curFrm) {
-            ProcessSingleFrame(pcd_dir + pcd_file_names[curFrm], poses[curFrm]);
-            lastFrm = curFrm;
+            //if(!jzy){
+                ProcessSingleFrame(pcd_dir + pcd_file_names[curFrm], poses[curFrm]);
+                lastFrm = curFrm;
+            //     jzy =true;
+            // }
         }
 
         // draw points

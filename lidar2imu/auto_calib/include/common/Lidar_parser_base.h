@@ -38,5 +38,6 @@ struct LidarPointXYZIRT {
 
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     LidarPointXYZIRT,
-    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-        uint16_t, ring, ring)(double, timestamp, timestamp))
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)
+    //(uint16_t, ring, ring)(double, timestamp, timestamp)
+    )

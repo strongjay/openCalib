@@ -34,7 +34,7 @@ pangolin::GlBuffer *source_colorBuffer_;
 pangolin::GlBuffer *target_vertexBuffer_;
 pangolin::GlBuffer *target_colorBuffer_;
 
-double cali_scale_degree_ = 0.3;
+double cali_scale_degree_ = 10.0;
 double cali_scale_trans_ = 0.06;
 static Eigen::Matrix4d calibration_matrix_ = Eigen::Matrix4d::Identity();
 static Eigen::Matrix4d orign_calibration_matrix_ = Eigen::Matrix4d::Identity();
@@ -76,25 +76,26 @@ bool kbhit() {
   return byteswaiting > 0;
 }
 
+// 创建微调矩阵列表
 void CalibrationInit(Eigen::Matrix4d json_param) {
-  Eigen::Matrix4d init_cali;
-  init_cali << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1;
-  calibration_matrix_ = json_param;
-  orign_calibration_matrix_ = json_param;
-  modification_list_.reserve(12);
+  // Eigen::Matrix4d init_cali;
+  // init_cali << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1;
+  calibration_matrix_ = json_param;                   // 全局作用外参
+  orign_calibration_matrix_ = json_param;             // 用于复位
+  modification_list_.reserve(12);                     // 12个微调矩阵
   for (int32_t i = 0; i < 12; i++) {
-    std::vector<int> transform_flag(6, 0);
-    transform_flag[i / 2] = (i % 2) ? (-1) : 1;
+    std::vector<int> transform_flag(6, 0);            // 6自由度标志位（旋转XYZ + 平移XYZ）
+    transform_flag[i / 2] = (i % 2) ? (-1) : 1;       // 奇1，偶-1
     Eigen::Matrix4d tmp = Eigen::Matrix4d::Identity();
     Eigen::Matrix3d rot_tmp;
-    rot_tmp =
+    rot_tmp =                                         // 设置旋转方向（XYZ欧拉角），长度：cali_scale_degree_
         Eigen::AngleAxisd(transform_flag[0] * cali_scale_degree_ / 180.0 * M_PI,
                           Eigen::Vector3d::UnitX()) *
         Eigen::AngleAxisd(transform_flag[1] * cali_scale_degree_ / 180.0 * M_PI,
                           Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(transform_flag[2] * cali_scale_degree_ / 180.0 * M_PI,
                           Eigen::Vector3d::UnitZ());
-    tmp.block(0, 0, 3, 3) = rot_tmp;
+    tmp.block(0, 0, 3, 3) = rot_tmp;                  // 设置平移方向，长度：cali_scale_trans_
     tmp(0, 3) = transform_flag[3] * cali_scale_trans_;
     tmp(1, 3) = transform_flag[4] * cali_scale_trans_;
     tmp(2, 3) = transform_flag[5] * cali_scale_trans_;
@@ -304,6 +305,7 @@ void LoadLidarPCDs(const std::string &pcds_dir,
   }
 }
 
+// 将外参作用在所有点云
 int ProcessLidarFrame(const std::vector<pcl::PointCloud<pcl::PointXYZI>> &pcds,
                       const std::vector<Eigen::Matrix4d> &lidar_poses,
                       const Eigen::Matrix4d &calibration_matrix_,

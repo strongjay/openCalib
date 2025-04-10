@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 ## Get Pangolin
 find_package(Pangolin 0.4 REQUIRED)
 include_directories(${Pangolin_INCLUDE_DIRS})
-
+add_compile_definitions(EIGEN_HAS_CONSTEXPR=1 EIGEN_CONSTEXPR=constexpr)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED system)
 find_package(OpenCV REQUIRED)
@@ -26,7 +26,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
 file(GLOB_RECURSE PARSER_PATH src/*.cpp)
 add_library(${PROJECT_NAME} STATIC ${PARSER_PATH})
-target_link_libraries(${PROJECT_NAME} libjsoncpp.a ${OpenCV_LIBS} ${Boost_SYSTEM_LIBRARY} ceres)
+target_link_libraries(${PROJECT_NAME} libjsoncpp.so ${OpenCV_LIBS} ${Boost_SYSTEM_LIBRARY} ceres)
 
 add_executable(run_lidar2imu src/run_lidar2imu.cpp)
 target_link_libraries(run_lidar2imu ${PROJECT_NAME})
