@@ -30,24 +30,35 @@ using namespace std::chrono_literals;
 class OnlineCalib : public rclcpp::Node {
 public:
     OnlineCalib() : Node("dataCollector") {
-        navsatfix_sub_.subscribe(this, "/fix");
-        imu_sub_.subscribe(this, "/imu");
-        pointcloud_sub_.subscribe(this, "/rslidar_points");
-
-        sync_ = std::make_shared<Sync>(
+        // 参数设置
+        this->declare_parameter<std::string>("gps_topic", "/fix");
+        this->declare_parameter<std::string>("imu_topic", "/imu");
+        this->declare_parameter<std::string>("pcd_topic", "/rslidar_points");
+        this->gps_topic_ = this->get_parameter("gps_topic").as_string();
+        this->imu_topic_ = this->get_parameter("imu_topic").as_string();
+        this->dcd_topic_ = this->get_parameter("pcd_topic").as_string();
+        this->navsatfix_sub_.subscribe(this, this->gps_topic_);
+        this->imu_sub_.subscribe(this, this->imu_topic_);
+        this->pointcloud_sub_.subscribe(this, this->dcd_topic_);
+        this->sync_ = std::make_shared<Sync>(
             SyncPolicy(100),
             navsatfix_sub_,
             imu_sub_,
             pointcloud_sub_
         );
-        sync_->registerCallback(&OnlineCalib::callback, this);
+        this->sync_->registerCallback(&OnlineCalib::callback, this);
 
         // 初始化地理坐标转换器
-        enu_converter_.Reset(0, 0, 0); // 初始值将在第一帧更新
-        odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/my_odometry", 10);
+        this->enu_converter_.Reset(0, 0, 0); // 初始值将在第一帧更新
+        this->odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/my_odometry", 10);
     }
 
 private:
+    // 订阅话题
+    std::string imu_topic_;
+    std::string gps_topic_;
+    std::string dcd_topic_;
+    // 同步器
     using SyncPolicy = message_filters::sync_policies::ApproximateTime<
         sensor_msgs::msg::NavSatFix,
         sensor_msgs::msg::Imu,
