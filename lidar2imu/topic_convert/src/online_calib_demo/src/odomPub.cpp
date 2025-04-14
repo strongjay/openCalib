@@ -9,6 +9,7 @@
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "geographic_msgs/msg/geo_point.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include <tf2/LinearMath/Matrix3x3.h>
 
 class GPSOdomPublisher : public rclcpp::Node
 {
@@ -44,14 +45,13 @@ public:
         
         // 初始化成员变量
         gps_init_ = false;
-        init_lat_ = 0.0;
-        init_lon_ = 0.0;
-        init_alt_ = 0.0;
         init_x_ = 0.0;
         init_y_ = 0.0;
         init_z_ = 0.0;
         current_orientation_ = tf2::Quaternion::getIdentity();
         RCLCPP_INFO(this->get_logger(), "Initialization done!!!");
+        total_distance_ = 0.0;
+        first_position_ = true;
     }
 
 private:
@@ -88,7 +88,6 @@ private:
             init_orientation_.setY(msg->orientation.y);
             init_orientation_.setZ(msg->orientation.z);
             init_orientation_.setW(msg->orientation.w);
-            RCLCPP_INFO(this->get_logger(), "IMU init done!");
             return;
         }
         // 更新当前姿态
@@ -108,33 +107,21 @@ private:
         }
 
         // 如果尚未初始化，使用第一个GPS消息作为起始点
-        // 初始化原点
         if(!gps_init_ && msg->status.status >= sensor_msgs::msg::NavSatStatus::STATUS_FIX)
         {
-            init_lat_ = msg->latitude;
-            init_lon_ = msg->longitude;
-            init_alt_ = msg->altitude;
             gps_init_ = true;
-            
             // 原点经纬度转UTM
             geographic_msgs::msg::GeoPoint gp_init;
-            gp_init.latitude = init_lat_;
-            gp_init.longitude = init_lon_;
-            gp_init.altitude = init_alt_;
+            gp_init.latitude = msg->latitude;;
+            gp_init.longitude = msg->longitude;
+            gp_init.altitude = msg->altitude;
             geodesy::UTMPoint pt_init(gp_init);
             init_x_ = pt_init.easting;
             init_y_ = pt_init.northing;
             init_z_ = pt_init.altitude;
-            // // 设置局部笛卡尔坐标系原点参数
-            // this->set_parameter(rclcpp::Parameter("origin_x", init_lat_));
-            // this->set_parameter(rclcpp::Parameter("origin_y", init_lon_));
-            // this->set_parameter(rclcpp::Parameter("origin_z", init_alt_));
-            
-            RCLCPP_INFO(this->get_logger(), "Origin set at lat: %.6f, lon: %.6f, alt: %.6f", init_lat_, init_lon_, init_alt_);
+            RCLCPP_INFO(this->get_logger(), "Origin set at lat: %.6f, lon: %.6f, alt: %.6f", init_x_, init_y_, init_z_);
             return;
         }
-        
-        
 
         // 将当前GPS位置转换为UTM坐标
         geographic_msgs::msg::GeoPoint gp;
@@ -142,40 +129,63 @@ private:
         gp.longitude = msg->longitude;
         gp.altitude = msg->altitude;
         geodesy::UTMPoint pt(gp);
-        double fix_x = pt.easting;
-        double fix_y = pt.northing;
-        double fix_z = pt.altitude;
+        double fix_x = pt.easting - init_x_;
+        double fix_y = pt.northing - init_y_;
+        double fix_z = pt.altitude - init_z_;
+        // 更新里程
+        updateDistance();
+        updateOdometry();
         
-        // RCLCPP_INFO(this->get_logger(), "LocalCartesian position: %f, %f", fix_x - init_x_, fix_y - init_y_);
+    }
 
+
+    void updateDistance() {
+        geometry_msgs::msg::Point current_pos;
+        current_pos.x = fix_x;
+        current_pos.y = fix_y;
+        current_pos.z = fix_z;
+        // 首次收到位置，不计算距离，只更新上一次位置
+        if (first_position_) {
+            last_pos_ = current_pos;
+            first_position_ = false;
+            return;
+        }
+        // 计算水平位移（忽略高度变化）
+        double dx = current_pos.x - last_pos_.x;
+        double dy = current_pos.y - last_pos_.y;
+        double delta_distance = std::sqrt(dx * dx + dy * dy);
+        // 累加总里程
+        total_distance_ += delta_distance;
+        last_pos_ = current_pos;
+        std::cout<< "DIS: \t" << total_distance_ << std::endl << std::endl;
+    }
+
+    void updateOdometry(){
         // 构建Odometry消息
         auto gps_odom = nav_msgs::msg::Odometry();
         gps_odom.header.stamp = this->now();
         gps_odom.header.frame_id = "rslidar";
         gps_odom.child_frame_id = "gps";
         // 设置位置（相对原点）
-        gps_odom.pose.pose.position.x = (fix_x - init_x_);
-        gps_odom.pose.pose.position.y = (fix_y - init_y_);
-        gps_odom.pose.pose.position.z = (fix_z - init_z_);
+        gps_odom.pose.pose.position.x = fix_x;
+        gps_odom.pose.pose.position.y = fix_y;
+        gps_odom.pose.pose.position.z = fix_z;
         // 设置方向（来自IMU）
         tf2::Quaternion q_rel = current_orientation_ * init_orientation_.inverse() ;
         q_rel.normalize();  // 确保单位化
-        // 调试输出
-        // double roll, pitch, yaw;
-        // tf2::Matrix3x3(q_rel).getRPY(roll, pitch, yaw);
-        // RCLCPP_INFO(this->get_logger(), "Corrected RPY: [%.2f°, %.2f°, %.2f°]", 
-        //             roll*180/M_PI, pitch*180/M_PI, yaw*180/M_PI);
         gps_odom.pose.pose.orientation.x = q_rel.x();
         gps_odom.pose.pose.orientation.y = q_rel.y();
         gps_odom.pose.pose.orientation.z = q_rel.z();
         gps_odom.pose.pose.orientation.w = q_rel.w();
-
+        // 调试输出
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q_rel).getRPY(roll, pitch, yaw);
+        std::cout << "POS: \t" << fix_x << " \t" << fix_y << " \t" << fix_z << " \t" << std::endl;
+        std::cout << "ROT: \t" << roll*180/M_PI << " \t" << pitch*180/M_PI << " \t" << yaw*180/M_PI << " \t" << std::endl;
 
         
         // 发布Odometry消息
         odom_pub_->publish(gps_odom);
-        std::cout<<"current position: "<<gps_odom.pose.pose.position.x<<" "<<gps_odom.pose.pose.position.y<<" "<<gps_odom.pose.pose.position.z<<std::endl;
-        std::cout<<"current orientation: "<<gps_odom.pose.pose.orientation.x<<" "<<gps_odom.pose.pose.orientation.y<<" "<<gps_odom.pose.pose.orientation.z<<" "<<gps_odom.pose.pose.orientation.w<<std::endl;
     }
 
     // ROS2订阅器和发布器
@@ -191,13 +201,19 @@ private:
     // 成员变量
     bool imu_init_ = false;
     bool gps_init_ = false;
-
-    double init_lat_, init_lon_, init_alt_;
     double init_x_, init_y_, init_z_;
     tf2::Quaternion init_orientation_;
     tf2::Quaternion current_orientation_;
     std::string imu_topic_;
     std::string gps_fix_topic_;
+
+    // 里程
+    double fix_x = 0.0;
+    double fix_y = 0.0;
+    double fix_z = 0.0;
+    double total_distance_ = 0.0;         // 总里程
+    bool first_position_ = true;          // 首次位置标记
+    geometry_msgs::msg::Point last_pos_;  // 上一次位置
 
 };
 
